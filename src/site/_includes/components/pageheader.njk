@@ -1,3 +1,327 @@
+<style>
+file-name {
+  display: none;
+}
+
+.lang-switcher {
+  position: fixed;
+  bottom: 16px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  gap: 10px;
+  background: rgba(255,255,255,0.94);
+  backdrop-filter: blur(16px);
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  font: 600 14px system-ui;
+}
+.lang-switcher button {
+  all: unset;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: rgba(30, 30, 30, 0.94) !important;
+  background-color: white !important;
+  font-weight: bold
+}
+.lang-switcher button.active {
+  color: white !important;
+  background: #0066ff !important;
+  color: white;
+}
+.lang-switcher button:hover:not(.active) {
+  background: #f0f0f0;
+}
+@media (prefers-color-scheme: dark) {
+  .lang-switcher { background: rgba(30,30,30,0.94); }
+  .lang-switcher button:hover:not(.active) { background: #404040; }
+}
+</style>
+
+<style>
+.lang-switcher {
+  position: fixed;
+  bottom: 16px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  gap: 10px;
+  background: rgba(255,255,255,0.94);
+  backdrop-filter: blur(16px);
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  font: 600 14px system-ui;
+}
+.lang-switcher button {
+  all: unset;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: rgba(30, 30, 30, 0.94) !important;
+  background-color: white !important;
+  font-weight: bold
+}
+.lang-switcher button.active {
+  color: white !important;
+  background: #0066ff !important;
+  color: white;
+}
+.lang-switcher button:hover:not(.active) {
+  background: #f0f0f0;
+}
+@media (prefers-color-scheme: dark) {
+  .lang-switcher { background: rgba(30,30,30,0.94); }
+  .lang-switcher button:hover:not(.active) { background: #404040; }
+}
+</style>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  console.clear();
+  console.log("Dynamic Language Switcher v2025 (per-note detection)");
+
+  // ---------------------------------------------------------
+  // Utility: extract slug from href (no trailing slash)
+  // ---------------------------------------------------------
+  const getSlugFromHref = (href) => {
+    try {
+      const url = new URL(href, location.origin);
+      const clean = url.pathname.replace(/\/+$/, "");
+      const parts = clean.split("/").filter(Boolean);
+      return parts.length ? parts.pop() : "";
+    } catch {
+      return "";
+    }
+  };
+
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // ---------------------------------------------------------
+  // STEP 0: Detect current path pieces early
+  // ---------------------------------------------------------
+  const rawPath = location.pathname.replace(/\/+$/, "") || "/";
+  const parts = rawPath.split("/").filter(Boolean);
+  const slug = parts.length ? parts[parts.length - 1] : "";
+  const baseDir = parts.length > 1
+    ? "/" + parts.slice(0, -1).join("/") + "/"
+    : "/";
+
+  const slugLang = slug.match(/-([a-z]{2,3})$/)?.[1] || "";
+  const slugBaseName = slug.replace(/-[a-z]{2,3}$/, "");
+
+  // ---------------------------------------------------------
+  // STEP 1: Detect home page base name (dg-home marker) + cache
+  //   You leave: <file-name>home.page</file-name>
+  //   inside the note you mark: dg-home="true"
+  // ---------------------------------------------------------
+  const HOME_BASE_KEY = "dg_home_base";
+
+  const normalizeFileNameToSlugBase = (text) => {
+    return text.trim()
+      .toLowerCase()
+      .replace(/\./g, "-")     // dots -> hyphens
+      .replace(/\s+/g, "-")    // spaces -> hyphens
+      .replace(/[^\w-]/g, "")  // remove anything weird
+      .replace(/-+$/g, "");    // trim trailing hyphens
+  };
+
+  const getHomeBaseName = () => {
+    // 1) Preferred: <file-name>...</file-name> inside a dg-home node
+    const marker = document.querySelector('[dg-home="true"] file-name')
+                || document.querySelector('file-name'); // fallback
+
+    if (marker?.textContent?.trim()) {
+      const fromMarker = normalizeFileNameToSlugBase(marker.textContent);
+      if (fromMarker) {
+        try { localStorage.setItem(HOME_BASE_KEY, fromMarker); } catch {}
+        return fromMarker;
+      }
+    }
+
+    // 2) Cached (works on /home-page-en, /home-page-ru, etc.)
+    try {
+      const cached = localStorage.getItem(HOME_BASE_KEY);
+      if (cached?.trim()) return cached.trim();
+    } catch {}
+
+    // 3) Fallback: old sidebar-root-link text method
+    const link = document.querySelector(
+      'a[href="/"].filename, a[href="./"].filename, a[href="/"] .filename'
+    );
+    if (!link?.textContent) return "home";
+
+    return link.textContent
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^\w-]/g, "")
+      .replace(/-[a-z]{2,3}$/, "");
+  };
+
+  const homeBase = getHomeBaseName();
+  console.log("Home base:", homeBase);
+
+  // Stable site default language for "/"
+  const SITE_DEFAULT_LANG =
+    (document.documentElement.lang?.trim().toLowerCase().match(/^[a-z]{2,3}$/) || [])[0]
+    || "uz";
+
+  const isRoot = rawPath === "/";
+  const baseName = isRoot ? homeBase : slugBaseName;
+
+  // ---------------------------------------------------------
+  // STEP 2: Collect candidate slugs from sidebar
+  // ---------------------------------------------------------
+  const anchors = [...document.querySelectorAll("a.filename")];
+  const slugs = anchors
+    .map(a => a.getAttribute("href"))
+    .filter(href => href && href !== "/")
+    .map(getSlugFromHref)
+    .filter(Boolean);
+
+  // ---------------------------------------------------------
+  // STEP 3: Infer languages ONLY for the current note (baseName-xx)
+  // ---------------------------------------------------------
+  const langSet = new Set();
+  const langRegex = new RegExp("^" + escapeRe(baseName) + "-([a-z]{2,3})$");
+
+  for (const s of slugs) {
+    const m = s.match(langRegex);
+    if (m) langSet.add(m[1]);
+  }
+
+  // HOME FIX: always include the "/" language for the home note (including its -en/-ru variants)
+  if (baseName === homeBase) {
+    langSet.add(SITE_DEFAULT_LANG);
+  }
+
+  if (langSet.size === 0) {
+    console.log("No per-note language variants detected for:", baseName);
+    return;
+  }
+
+  const LANGS = [...langSet]
+    .sort()
+    .reduce((acc, lang) => {
+      acc[lang] = lang.toUpperCase();
+      return acc;
+    }, {});
+
+  // Default language: stable for home, otherwise keep prior behavior
+  const defaultLang = (baseName === homeBase) ? SITE_DEFAULT_LANG : Object.keys(LANGS)[0];
+
+  // Current language: for "/", it's always the home default
+  const currentLang = isRoot ? defaultLang : (slugLang || defaultLang);
+
+  console.log("Current:", { rawPath, slug, baseDir, baseName, currentLang, defaultLang, SITE_DEFAULT_LANG });
+  console.log("Languages (per-note):", LANGS);
+
+  // ---------------------------------------------------------
+  // STEP 4: Build target URLs
+  // ---------------------------------------------------------
+  const buildTargetUrl = (targetLang) => {
+    if (baseName === homeBase) {
+      return targetLang === defaultLang
+        ? "/"
+        : "/" + homeBase + "-" + targetLang;
+    }
+    return baseDir + baseName + "-" + targetLang;
+  };
+
+  // ---------------------------------------------------------
+  // STEP 5: Create language switcher
+  // ---------------------------------------------------------
+  const switcher = document.createElement("div");
+  switcher.className = "lang-switcher";
+
+  for (const [code, label] of Object.entries(LANGS)) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+
+    if (code === currentLang) btn.classList.add("active");
+
+    btn.onclick = async () => {
+      if (code === currentLang) return;
+
+      const targetUrl = buildTargetUrl(code);
+      console.log(`Switch → ${currentLang} → ${code}:`, targetUrl);
+
+      try {
+        const res = await fetch(targetUrl, { method: "HEAD" });
+        if (res.ok) location.href = targetUrl;
+      } catch (err) {
+        console.log("Fetch error:", err);
+      }
+    };
+
+    switcher.appendChild(btn);
+  }
+
+  document.body.appendChild(switcher);
+  console.log("Dynamic switcher initialized");
+});
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script async type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
